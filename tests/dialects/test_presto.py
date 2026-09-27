@@ -6,6 +6,23 @@ from tests.dialects.test_dialect import Validator
 class TestPresto(Validator):
     dialect = "presto"
 
+    def test_decimal_literal(self):
+        # A DECIMAL literal keeps its own precision and scale; a bare DECIMAL is DECIMAL(38, 0)
+        for dialect in ("presto", "trino", "athena"):
+            with self.subTest(dialect=dialect):
+                for sql, expected in (
+                    ("SELECT DECIMAL '10.50'", "SELECT CAST('10.50' AS DECIMAL(4, 2))"),
+                    ("SELECT DECIMAL '-0.01'", "SELECT CAST('-0.01' AS DECIMAL(2, 2))"),
+                    ("SELECT DECIMAL '100'", "SELECT CAST('100' AS DECIMAL(3, 0))"),
+                    (
+                        "SELECT DECIMAL '12345678901234567890.123456789012345678'",
+                        "SELECT CAST('12345678901234567890.123456789012345678' AS DECIMAL(38, 18))",
+                    ),
+                    ("SELECT DECIMAL(10, 2) '1.5'", "SELECT CAST('1.5' AS DECIMAL(10, 2))"),
+                    ("SELECT CAST('1.5' AS DECIMAL)", "SELECT CAST('1.5' AS DECIMAL)"),
+                ):
+                    self.assertEqual(parse_one(sql, read=dialect).sql(dialect=dialect), expected)
+
     def test_cast(self):
         self.validate_identity("DEALLOCATE PREPARE my_query", check_command_warning=True)
         self.validate_identity("DESCRIBE INPUT x", check_command_warning=True)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import typing as t
+from decimal import Decimal, InvalidOperation
 
 from sqlglot import exp, parser
 from sqlglot.dialects.dialect import (
@@ -56,9 +57,32 @@ def _build_to_char(args: list, dialect: Dialect) -> exp.TimeToStr:
     return build_formatted_time(exp.TimeToStr, "teradata")(args, dialect)
 
 
+def _parse_decimal_literal(
+    self: parser.Parser, this: exp.Expr, data_type: exp.DataType
+) -> exp.Expr:
+    # DECIMAL '10.50' is a DECIMAL(4, 2) literal, but a bare DECIMAL means DECIMAL(38, 0),
+    # so the literal's own precision and scale must be kept when it becomes a cast.
+    if not data_type.expressions:
+        try:
+            _, digits, exponent = Decimal(this.name.strip()).as_tuple()
+        except InvalidOperation:
+            pass
+        else:
+            if isinstance(exponent, int):
+                scale = max(0, -exponent)
+                precision = max(len(digits) + max(0, exponent), scale, 1)
+                data_type = exp.DataType.build(f"DECIMAL({precision}, {scale})")
+    return self.expression(exp.Cast(this=this, to=data_type))
+
+
 class PrestoParser(parser.Parser):
     VALUES_FOLLOWED_BY_PAREN = False
     ZONE_AWARE_TIMESTAMP_CONSTRUCTOR = True
+
+    TYPE_LITERAL_PARSERS = {
+        **parser.Parser.TYPE_LITERAL_PARSERS,
+        exp.DType.DECIMAL: _parse_decimal_literal,
+    }
 
     NO_PAREN_FUNCTIONS = {
         **parser.Parser.NO_PAREN_FUNCTIONS,
